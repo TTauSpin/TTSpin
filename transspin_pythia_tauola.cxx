@@ -159,6 +159,18 @@ Rotate(TVector3 LVec, TVector3 Rot){
   vec.RotateX(Rot.Theta());
   return vec;
 }
+
+
+TVector3
+SubRotateZ(TVector3 LVec, TVector3 Rot){  // the one-time rotation along z to XZ plane
+  TVector3 vec = LVec;
+  vec.RotateZ(-Rot.Phi());  // not 0.5, to avoid warnings about 0 pT
+  //vec.RotateX(Rot.Theta());
+  return vec;
+}
+
+
+
 void redMinus(TauolaParticle *minus)
 {
   //   
@@ -176,7 +188,8 @@ void redMinus(TauolaParticle *minus)
 
   for(unsigned int dec=1; dec < 23; dec++){
     double br=0.0;
-    if(dec == 3 || dec == 4  || dec ==5) br = 0.333;
+    //    if(dec == 3 || dec == 4  || dec ==5) br = 0.333;
+    if(dec == 3) br = 0.99;
     Tauola::setTauBr(dec, br);
   }
 
@@ -200,7 +213,8 @@ void redPlus(TauolaParticle *plus)
 
   for(unsigned int dec=1; dec < 23; dec++){
     double br=0.0;
-    if(dec == 3 || dec == 4  || dec ==5) br = 0.333;
+    //    if(dec == 3 || dec == 4  || dec ==5) br = 0.333;
+    if(dec == 3) br = 0.99;
     Tauola::setTauBr(dec, br);
   }
   // can be called here 
@@ -219,12 +233,21 @@ int main(int argc,char **argv){
   TH1F  *phi_a1a1= new TH1F("phi_a1a1","#phi*_{a_{1}a_{1}}",50,0,3.14);
   TH1F  *phi_a1pi= new TH1F("phi_a1pi","#phi*_{a_{1}#pi}",50,0,3.14);
  
-
+  TH1F *Zformflavour = new TH1F("Zformflavour","Zformflavour",11,-0.5,10.5);
   TH1F *pos = new TH1F("pos","pos",200,50,150);
   TH1F *neg = new TH1F("neg","neg",200,50,150);
 
+  TH1F *pos_up = new TH1F("pos_up","pos_up",200,50,150);
+  TH1F *neg_up = new TH1F("neg_up","neg_up",200,50,150);
+
+  TH1F *pos_down = new TH1F("pos_down","pos_down",200,50,150);
+  TH1F *neg_down = new TH1F("neg_down","neg_down",200,50,150);
+
 
   TH1F *accol_pipi= new TH1F("accol_pipi","#delta*_{#pi#pi}",150,2.99,3.14);
+
+  TH1F *ele_phi= new TH1F("ele_phi","#Phi",50,-6.30,6.30);
+  TH1F *ele_theta= new TH1F("ele_theta","#Theta",50,-6.30,6.30);
 
 
   // Program needs at least 4 parameters
@@ -249,8 +272,8 @@ int main(int argc,char **argv){
 
   pythia.readString("Random:seed = "+str);
   //  pythia.readString("Random:seed = TMath::Hash(argv[1])");
-  std::cout<<" check hash "<<  TMath::Hash(argv[5]) <<std::endl;
-  std::cout<<"name    "<< argv[5]<<std::endl;
+  //  std::cout<<" check hash "<<  TMath::Hash(argv[5]) <<std::endl;
+  //std::cout<<"name    "<< argv[5]<<std::endl;
   Event& event = pythia.event;
   
   // Pythia8 HepMC interface depends on Pythia8 version
@@ -294,7 +317,7 @@ int main(int argc,char **argv){
 
   // // 2. Initialize pythia to pp or e+e- collisions (argv[2], from console)
    if(atoi(argv[2])==1) pythia.init( -2212, -2212, 14000.0); // p_bar  p_bar  collisions
-   else                 pythia.init( 11, -11, 500);          // e+ e- collisions
+   else                 pythia.init( 11, -11, 91.18);          // e+ e- collisions
   //pythia.init( -2212, -2212, 14000.0);
   // 3. Get number of events (argv[3], from console)
   if(argc>3) NumberOfEvents=atoi(argv[3]);
@@ -317,13 +340,15 @@ int main(int argc,char **argv){
   Tauola::setRedefineTauMinus(redMinus);
 
   Tauola::setRadiation(false); // turn off radiation in leptionic decays
+  Tauola::spin_correlation.setAll(true);
   Tauola::initialize();
-
+  Tauola::spin_correlation.setAll(true);
   MC_Initialize();
-
+  Tauola::spin_correlation.setAll(true);
   // Begin event loop
   for(unsigned int iEvent = 0; iEvent < NumberOfEvents; ++iEvent)
   {
+    //    std::cout<<"  A new event:  "<<std::endl;
     if (iEvent%1000==0) Log::Info()<<"Event: "<<iEvent<<endl;
     if (!pythia.next()) continue;
 
@@ -358,15 +383,36 @@ int main(int argc,char **argv){
 
     int JAK1(0); int SubJAK1(0);
     HepMC::GenParticle *FirstTau;
+    HepMC::GenParticle *ZGenParticle;
+    HepMC::GenParticle *beam_electron_minus;
+    HepMC::GenParticle *beam_electron_plus;
     std::vector<HepMC::GenParticle > FirstTauProducts;
     int JAK2(0); int SubJAK2(0);
     HepMC::GenParticle *SecondTau;
-    std::vector<HepMC::GenParticle > SecondTauProducts;
+    std::vector<HepMC::GenParticle > SecondTauProducts; 
     std::vector<HepMC::GenParticle > A1Pions;
     std::vector<HepMC::GenParticle > A1Pions1;
     std::vector<HepMC::GenParticle > A1Pions2;
     std::vector<HepMC::GenParticle > SortA1Pions;  //os, ss1, ss2
+    int quarkflavours;
     for ( HepMC::GenEvent::particle_const_iterator p =HepMCEvt->particles_begin();  p != HepMCEvt->particles_end(); ++p ){  
+      //      std::cout<<"pdg:     "<< (*p)->pdg_id() << "    "<<(*p)->status()<<std::endl;
+      if((*p)->pdg_id()==23){
+	ZGenParticle = *p;
+	for ( HepMC::GenEvent::particle_const_iterator pp =HepMCEvt->particles_begin();  pp != HepMCEvt->particles_end(); ++pp ){
+	  if((*pp)->end_vertex() == (*p)->production_vertex() && (*pp)->pdg_id()!=23){
+	    quarkflavours = abs((*pp)->pdg_id());
+	    if((*pp)->pdg_id() ==  11)beam_electron_minus = *pp;
+	    if((*pp)->pdg_id() == -11)beam_electron_plus = *pp;
+	    // std::cout<<" quark flavour  "<< (*pp)->pdg_id() << std::endl;
+	     }
+	}
+      }
+
+
+
+
+
       if((*p)->pdg_id()==15){
 	FirstTau = *p;
 	for ( HepMC::GenEvent::particle_const_iterator d =HepMCEvt->particles_begin();  d != HepMCEvt->particles_end(); ++d ){  
@@ -463,6 +509,12 @@ int main(int argc,char **argv){
 	  }
       }
     }
+
+    TLorentzVector beam_electron(0,0,0,0);
+    TLorentzVector beam_pozitron(0,0,0,0);
+
+
+
     TLorentzVector tau1(0,0,0,0);
     TLorentzVector tau2(0,0,0,0);
     TLorentzVector a1ospi(0,0,0,0);
@@ -476,6 +528,8 @@ int main(int argc,char **argv){
     tau1.SetPxPyPzE(FirstTau->momentum().px(), FirstTau->momentum().py(), FirstTau->momentum().pz(), FirstTau->momentum().e());
     tau2.SetPxPyPzE(SecondTau->momentum().px(), SecondTau->momentum().py(), SecondTau->momentum().pz(), SecondTau->momentum().e());
 
+    beam_electron.SetPxPyPzE(beam_electron_minus->momentum().px(), beam_electron_minus->momentum().py(), beam_electron_minus->momentum().pz(), beam_electron_minus->momentum().e());
+    beam_pozitron.SetPxPyPzE(beam_electron_plus->momentum().px(), beam_electron_plus->momentum().py(), beam_electron_plus->momentum().pz(), beam_electron_plus->momentum().e());
 
 
     //---------------------------------------------------------------------------
@@ -782,12 +836,103 @@ int main(int argc,char **argv){
 
 	int HelWeightPlus = HelPlus;
 	int HelWeightMinus = HelMinus;
-
+	Zformflavour->Fill(quarkflavours);
 	pos->Fill((tau1+ tau2).M(),HelWeightPlus);
 	neg->Fill((tau1+ tau2).M(),HelWeightMinus);
 
+	bool upquark(false);
+	bool downquark(false);
+	if(quarkflavours == 1 or quarkflavours==4)upquark = true;
+	if(quarkflavours == 2 or quarkflavours==3 or quarkflavours==5)downquark = true;
+	pos_up ->Fill((tau1+ tau2).M(),HelWeightPlus*upquark);
+	neg_up ->Fill((tau1+ tau2).M(),HelWeightMinus*upquark);
+ 
+	pos_down->Fill((tau1+ tau2).M(),HelWeightPlus*downquark);
+	neg_down->Fill((tau1+ tau2).M(),HelWeightMinus*downquark);
+
+
 	//	std::cout<<"+?  :  "<< HelWeightPlus <<"  -?   " <<HelWeightMinus << std::endl;
-	
+	//	std::cout<<"tau tau mass  "<< (tau1+ tau2).M()  <<" beam cms  "<< (beam_pozitron + beam_electron).M() << std::endl;
+
+	//	beam_pozitron.Print();
+	//	beam_electron.Print();
+
+	TLorentzVector cms_frame = beam_electron + beam_pozitron;
+
+
+	if(JAK1 ==3 && JAK2 == 3){
+
+	  TLorentzVector pion1 = tauandprod1.at(1);
+	  TLorentzVector pion2 = tauandprod2.at(1);
+
+	  // std::cout<<" beam -   "; beam_electron.Print();
+	  // std::cout<<" beam +   "; beam_pozitron.Print();
+
+	  // std::cout<<" tau -   "; tau1.Print();
+	  // std::cout<<" tau +   "; tau2.Print();
+ 
+	  // std::cout<<" pion -   "; pion1.Print();
+	  // std::cout<<" pion +   "; pion2.Print();
+
+
+	  TVector3 Rotation1 = pion1.Vect();
+
+
+	  TLorentzVector tau1R1 = tau1; tau1R1.SetVect(Rotate(tau1.Vect(), Rotation1));
+	  TLorentzVector tau2R1 = tau2; tau2R1.SetVect(Rotate(tau2.Vect(), Rotation1));
+
+	  TLorentzVector pion1R1 = pion1; pion1R1.SetVect(Rotate(pion1.Vect(), Rotation1));
+	  TLorentzVector pion2R1 = pion2; pion2R1.SetVect(Rotate(pion2.Vect(), Rotation1));
+
+	  TLorentzVector beam_electronR1 = beam_electron; beam_electronR1.SetVect(Rotate(beam_electron.Vect(),Rotation1));
+	  TLorentzVector beam_pozitronR1 = beam_pozitron; beam_pozitronR1.SetVect(Rotate(beam_pozitron.Vect(),Rotation1));
+
+	  // std::cout<<"after rotation 1"<<std::endl;
+	  // std::cout<<" beam -   "; beam_electronR1.Print();
+	  // std::cout<<" beam +   "; beam_pozitronR1.Print();
+
+	  // std::cout<<" tau -   "; tau1R1.Print();
+	  // std::cout<<" tau +   "; tau2R1.Print();
+ 
+	  // std::cout<<" pion -   "; pion1R1.Print();
+	  // std::cout<<" pion +   "; pion2R1.Print();
+
+
+	  TVector3 Rotation2 = pion2R1.Vect();
+
+
+
+	  TLorentzVector tau1R2 = tau1R1; tau1R2.SetVect(SubRotateZ(tau1R1.Vect(), Rotation2));
+	  TLorentzVector tau2R2 = tau2R1; tau2R2.SetVect(SubRotateZ(tau2R1.Vect(), Rotation2));
+
+	  TLorentzVector pion1R2 = pion1R1; pion1R2.SetVect(SubRotateZ(pion1R1.Vect(), Rotation2));
+	  TLorentzVector pion2R2 = pion2R1; pion2R2.SetVect(SubRotateZ(pion2R1.Vect(), Rotation2));
+
+	  TLorentzVector beam_electronR2 = beam_electronR1; beam_electronR2.SetVect(SubRotateZ(beam_electronR1.Vect(),Rotation2));
+	  TLorentzVector beam_pozitronR2 = beam_pozitronR1; beam_pozitronR2.SetVect(SubRotateZ(beam_pozitronR1.Vect(),Rotation2));
+
+	  // std::cout<<"after rotation 2"<<std::endl;
+	  // std::cout<<" beam -   "; beam_electronR2.Print();
+	  // std::cout<<" beam +   "; beam_pozitronR2.Print();
+
+	  // std::cout<<" tau -   "; tau1R2.Print();
+	  // std::cout<<" tau +   "; tau2R2.Print();
+ 
+	  // std::cout<<" pion -   "; pion1R2.Print();
+	  // std::cout<<" pion +   "; pion2R2.Print();
+
+
+	  TLorentzVector Xcheck = pion2R1; Xcheck.SetVect(SubRotateZ(Xcheck.Vect(),Rotation2));
+
+	  //	  std::cout<<" pion - Rot2 "; Xcheck.Print();
+
+
+	  ele_phi->Fill(beam_electronR2.Phi());
+	  ele_theta->Fill(beam_electronR2.Theta());
+	  //	  std::cout<<" beam_electronR2.Theta() " << beam_electronR2.Theta() <<std::endl;
+	}
+
+
 	// Run MC-TESTER on the event
 	HepMCEvent temp_event(*HepMCEvt,false);
 	MC_Analyze(&temp_event);
